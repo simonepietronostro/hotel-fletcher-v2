@@ -7,33 +7,113 @@
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
-  <main class="wrap">
-    <section class="hero">
+  <div class="wrap">
+    <header class="hero">
       <div>
         <h1>Hotel Fletcher V2</h1>
-        <p class="muted">Nuova base di sviluppo del gestionale alloggi personale.</p>
+        <p class="muted">Ambiente online di sviluppo separato dalla V1.</p>
       </div>
-      <div class="status-card">
-        <strong>Stato progetto</strong>
-        <p>Repository inizializzata. Prossimo step: importare il codice operativo separato.</p>
+      <div class="hero-actions">
+        <label for="today">Data di riferimento</label>
+        <input id="today" type="date" />
+        <div class="button-row">
+          <button class="btn secondary" id="exportJsonBtn" type="button">Export JSON</button>
+          <button class="btn secondary" id="importJsonBtn" type="button">Import JSON</button>
+          <button class="btn" id="exportCsvBtn" type="button">Export CSV</button>
+          <input id="importJsonFile" type="file" accept=".json,application/json" hidden />
+        </div>
+        <div id="notice" class="notice"></div>
       </div>
+    </header>
+
+    <section class="kpi-grid">
+      <article class="card kpi"><span>Totale stanze</span><strong id="kpiRooms">0</strong></article>
+      <article class="card kpi"><span>Capienza totale</span><strong id="kpiCapacity">0</strong></article>
+      <article class="card kpi"><span>Occupati oggi</span><strong id="kpiOccupied">0</strong></article>
+      <article class="card kpi"><span>Disponibili oggi</span><strong id="kpiAvailable">0</strong></article>
     </section>
 
-    <section class="grid">
-      <article class="card">
-        <h2>Produzione protetta</h2>
-        <p>La versione attualmente in uso resta separata e non viene modificata.</p>
-      </article>
-      <article class="card">
-        <h2>Refactoring modulare</h2>
-        <p>Il codice sarà diviso in moduli: camere, presenze, export, cloud, validazioni e UI.</p>
-      </article>
-      <article class="card">
-        <h2>Implementazioni future</h2>
-        <p>Log modifiche, import Excel, report azienda, dashboard e gestione conflitti cloud.</p>
-      </article>
-    </section>
-  </main>
+    <nav class="tabs" aria-label="Sezioni gestionale">
+      <button class="tab-btn active" data-tab="rooms" type="button">Stanze</button>
+      <button class="tab-btn" data-tab="stays" type="button">Presenze</button>
+      <button class="tab-btn" data-tab="history" type="button">Storico</button>
+    </nav>
+
+    <main>
+      <section id="rooms" class="tab-panel active">
+        <div class="grid-2">
+          <article class="card">
+            <h2>Aggiungi camera</h2>
+            <p class="head">Inserisci numero stanza, tipo camera e capienza.</p>
+            <div class="form-grid">
+              <div><label for="roomCode">Numero stanza</label><input id="roomCode" placeholder="Es. A101" /></div>
+              <div><label for="roomType">Tipo camera</label><input id="roomType" value="Double room" /></div>
+              <div><label for="roomCapacity">Capienza</label><input id="roomCapacity" type="number" min="1" max="10" value="2" /></div>
+            </div>
+            <div class="button-row"><button class="btn" id="addRoomBtn" type="button">Salva camera</button></div>
+          </article>
+
+          <article class="card">
+            <h2>Monitoraggio camere</h2>
+            <p class="head">Conteggio basato sulla data di riferimento. I cancellati non vengono conteggiati.</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Stanza</th><th>Tipo</th><th>Capienza</th><th>Occupati</th><th>Disponibili</th><th>Status</th><th class="right">Azioni</th></tr></thead>
+                <tbody id="roomsTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="stays" class="tab-panel">
+        <article class="card">
+          <h2>Registra soggiorno</h2>
+          <p class="head">Versione V2 online iniziale: registrazione singola, controlli base e persistenza locale.</p>
+          <div class="form-grid stays-form">
+            <div><label for="stayRoom">Stanza</label><select id="stayRoom"></select></div>
+            <div><label for="workerId">Worker ID</label><input id="workerId" placeholder="Es. 1-3-74D" /></div>
+            <div><label for="surname">Cognome</label><input id="surname" /></div>
+            <div><label for="name">Nome</label><input id="name" /></div>
+            <div><label for="company">Company</label><select id="company"><option value="">Seleziona</option><option>EOS</option><option>MS</option><option>RMLI</option><option>KOTLO</option></select></div>
+            <div><label for="nationality">Nazionalità</label><select id="nationality"><option value="">Seleziona</option><option>European</option><option>Non-European</option></select></div>
+            <div><label for="role">Role</label><input id="role" placeholder="Es. Helper" /></div>
+            <div><label for="status">Status</label><select id="status"><option value="confirmed">confirmed</option><option value="unknown">unknown</option><option value="cancelled">cancelled</option></select></div>
+            <div><label for="checkIn">Check-in</label><input id="checkIn" type="date" /></div>
+            <div><label for="checkOut">Check-out</label><input id="checkOut" type="date" /></div>
+          </div>
+          <div class="button-row"><button class="btn" id="addStayBtn" type="button">Registra soggiorno</button><button class="btn secondary" id="resetStayFormBtn" type="button">Reset</button></div>
+        </article>
+
+        <article class="card mt">
+          <div class="card-head">
+            <div>
+              <h2>Presenze registrate</h2>
+              <p class="head">Ricerca per nome, ID, azienda o stanza.</p>
+            </div>
+          </div>
+          <div class="toolbar">
+            <input id="searchStay" placeholder="Cerca per nome, ID, azienda, stanza..." />
+            <select id="filterRoom"></select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Lavoratore</th><th>Stanza</th><th>Company</th><th>Periodo</th><th>Status</th><th class="right">Azioni</th></tr></thead>
+              <tbody id="staysTable"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section id="history" class="tab-panel">
+        <article class="card">
+          <h2>Storico per stanza</h2>
+          <p class="head">Riepilogo dei soggiorni salvati nella V2 online.</p>
+          <div id="historyGrid" class="history-grid"></div>
+        </article>
+      </section>
+    </main>
+  </div>
 
   <script src="js/app.js"></script>
 </body>
