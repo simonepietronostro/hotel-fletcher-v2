@@ -162,6 +162,41 @@ function roomUsageForPeriod(roomCode, checkIn, checkOut, excludeId = "") {
   return { capacity, booked, available: Math.max(capacity - booked, 0) };
 }
 
+function findAvailableRoom(checkIn, checkOut) {
+  return state.rooms
+    .slice()
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .find(room => {
+      const usage = roomUsageForPeriod(room.code, checkIn, checkOut);
+      return usage.booked < usage.capacity;
+    }) || null;
+}
+
+function autoAssignRoom() {
+  const checkIn = els.checkIn.value;
+  const checkOut = els.checkOut.value;
+  if (!state.rooms.length) return showNotice("bad", "Prima aggiungi almeno una camera.");
+  if (!isDate(checkIn) || !isDate(checkOut)) return showNotice("bad", "Inserisci check-in e check-out validi.");
+  if (checkIn >= checkOut) return showNotice("bad", "Il check-out deve essere successivo al check-in.");
+
+  const room = findAvailableRoom(checkIn, checkOut);
+  if (!room) return showNotice("warn", "Nessuna camera disponibile nel periodo selezionato.");
+
+  els.stayRoom.value = room.code;
+  showNotice("ok", `Camera ${room.code} assegnata automaticamente.`);
+}
+
+function injectAutoAssignControl() {
+  if (!els.addStayBtn || document.getElementById("autoAssignRoomBtn")) return;
+  const button = document.createElement("button");
+  button.className = "btn secondary";
+  button.id = "autoAssignRoomBtn";
+  button.type = "button";
+  button.textContent = "Assegna camera automatica";
+  button.addEventListener("click", autoAssignRoom);
+  els.addStayBtn.parentElement.insertBefore(button, els.addStayBtn);
+}
+
 function renderAll() {
   renderRoomOptions();
   renderKpis();
@@ -393,5 +428,6 @@ document.addEventListener("click", event => {
 });
 
 setDefaultDates();
+injectAutoAssignControl();
 renderAll();
 console.info("Hotel Fletcher V2 MVP online", { rooms: state.rooms.length, stays: state.stays.length });
