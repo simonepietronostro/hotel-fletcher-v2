@@ -1,4 +1,4 @@
-const STORAGE_KEY = "hotel-fletcher-v2-mvp";
+const STORAGE_KEY = "hotel-fletcher-v2-stable";
 
 const els = {
   today: document.getElementById("today"),
@@ -41,62 +41,54 @@ function todayISO() {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return y + "-" + m + "-" + day;
 }
 
 function uid() {
-  return window.crypto && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  return "id-" + Date.now() + "-" + Math.random().toString(36).slice(2);
 }
 
-function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "\"": "&quot;",
-    "'": "&#39;"
-  })[char]);
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function cap(value) {
-  return String(value || "").trim().toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
+function capitalize(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\b\w/g, char => char.toUpperCase());
 }
 
 function upper(value) {
   return String(value || "").trim().toUpperCase();
 }
 
-function isDate(value) {
+function isIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
 }
 
-function fmtDate(value) {
-  if (!isDate(value)) return "-";
-  const [y, m, d] = value.split("-");
-  return `${d}/${m}/${y}`;
+function formatDate(value) {
+  if (!isIsoDate(value)) return "-";
+  const parts = value.split("-");
+  return parts[2] + "/" + parts[1] + "/" + parts[0];
 }
 
-function containsDate(stay, date) {
-  return stay.checkIn <= date && stay.checkOut > date;
-}
-
-function rangesOverlap(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && aEnd > bStart;
-}
-
-function activeStay(stay) {
+function isActiveStay(stay) {
   return String(stay.status || "").toLowerCase() !== "cancelled";
 }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { rooms: [], stays: [] };
-    const parsed = JSON.parse(raw);
-    return normalizeState(parsed);
-  } catch {
-    return { rooms: [], stays: [] };
-  }
+function stayIncludesDate(stay, date) {
+  return stay.checkIn <= date && stay.checkOut > date;
+}
+
+function rangesOverlap(startA, endA, startB, endB) {
+  return startA < endB && endA > startB;
 }
 
 function normalizeState(input) {
@@ -119,20 +111,32 @@ function normalizeState(input) {
     status: String(stay.status || "confirmed").trim().toLowerCase(),
     checkIn: String(stay.checkIn || "").trim(),
     checkOut: String(stay.checkOut || "").trim()
-  })).filter(stay => stay.roomCode && roomCodes.has(stay.roomCode)) : [];
+  })).filter(stay => roomCodes.has(stay.roomCode)) : [];
 
   return { rooms, stays };
 }
 
-function saveState(message = "Salvato") {
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { rooms: [], stays: [] };
+    return normalizeState(JSON.parse(raw));
+  } catch (error) {
+    console.error(error);
+    return { rooms: [], stays: [] };
+  }
+}
+
+function persistState(message) {
   state = normalizeState(state);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   renderAll();
-  showNotice("ok", message);
+  if (message) showNotice("ok", message);
 }
 
 function showNotice(type, message) {
-  els.notice.className = `notice show ${type}`;
+  if (!els.notice) return;
+  els.notice.className = "notice show " + type;
   els.notice.textContent = message;
   window.clearTimeout(showNotice.timer);
   showNotice.timer = window.setTimeout(() => {
@@ -141,52 +145,46 @@ function showNotice(type, message) {
   }, 3500);
 }
 
-function roomUsage(roomCode, date = els.today.value) {
+function roomUsage(roomCode, date) {
   const room = state.rooms.find(item => item.code === roomCode);
   const capacity = room ? Number(room.capacity) || 0 : 0;
-  const occupied = state.stays.filter(stay => stay.roomCode === roomCode && activeStay(stay) && containsDate(stay, date)).length;
+  const occupied = state.stays.filter(stay => stay.roomCode === roomCode && isActiveStay(stay) && stayIncludesDate(stay, date)).length;
   return { capacity, occupied, available: Math.max(capacity - occupied, 0) };
 }
 
-function roomUsageForPeriod(roomCode, checkIn, checkOut, excludeId = "") {
+function roomUsageForPeriod(roomCode, checkIn, checkOut) {
   const room = state.rooms.find(item => item.code === roomCode);
   const capacity = room ? Number(room.capacity) || 0 : 0;
-  const booked = state.stays.filter(stay =>
-    stay.id !== excludeId &&
-    stay.roomCode === roomCode &&
-    activeStay(stay) &&
-    isDate(stay.checkIn) &&
-    isDate(stay.checkOut) &&
-    rangesOverlap(stay.checkIn, stay.checkOut, checkIn, checkOut)
-  ).length;
+  const booked = state.stays.filter(stay => {
+    return stay.roomCode === roomCode &&
+      isActiveStay(stay) &&
+      isIsoDate(stay.checkIn) &&
+      isIsoDate(stay.checkOut) &&
+      rangesOverlap(stay.checkIn, stay.checkOut, checkIn, checkOut);
+  }).length;
   return { capacity, booked, available: Math.max(capacity - booked, 0) };
 }
 
 function findAvailableRoom(checkIn, checkOut) {
-  return state.rooms
-    .slice()
-    .sort((a, b) => a.code.localeCompare(b.code))
-    .find(room => {
-      const usage = roomUsageForPeriod(room.code, checkIn, checkOut);
-      return usage.booked < usage.capacity;
-    }) || null;
+  return state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code)).find(room => {
+    const usage = roomUsageForPeriod(room.code, checkIn, checkOut);
+    return usage.booked < usage.capacity;
+  }) || null;
 }
 
 function autoAssignRoom() {
   const checkIn = els.checkIn.value;
   const checkOut = els.checkOut.value;
   if (!state.rooms.length) return showNotice("bad", "Prima aggiungi almeno una camera.");
-  if (!isDate(checkIn) || !isDate(checkOut)) return showNotice("bad", "Inserisci check-in e check-out validi.");
+  if (!isIsoDate(checkIn) || !isIsoDate(checkOut)) return showNotice("bad", "Inserisci date valide.");
   if (checkIn >= checkOut) return showNotice("bad", "Il check-out deve essere successivo al check-in.");
-
   const room = findAvailableRoom(checkIn, checkOut);
   if (!room) return showNotice("warn", "Nessuna camera disponibile nel periodo selezionato.");
-
   els.stayRoom.value = room.code;
-  showNotice("ok", `Camera ${room.code} assegnata automaticamente.`);
+  showNotice("ok", "Camera " + room.code + " assegnata automaticamente.");
 }
 
-function injectAutoAssignControl() {
+function injectAutoAssignButton() {
   if (!els.addStayBtn || document.getElementById("autoAssignRoomBtn")) return;
   const button = document.createElement("button");
   button.className = "btn secondary";
@@ -208,7 +206,7 @@ function renderAll() {
 function renderKpis() {
   const date = els.today.value;
   const totalCapacity = state.rooms.reduce((sum, room) => sum + Number(room.capacity || 0), 0);
-  const occupied = state.stays.filter(stay => activeStay(stay) && containsDate(stay, date)).length;
+  const occupied = state.stays.filter(stay => isActiveStay(stay) && stayIncludesDate(stay, date)).length;
   els.kpiRooms.textContent = state.rooms.length;
   els.kpiCapacity.textContent = totalCapacity;
   els.kpiOccupied.textContent = occupied;
@@ -216,90 +214,97 @@ function renderKpis() {
 }
 
 function renderRoomOptions() {
-  const sorted = state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code));
-  const currentStayRoom = els.stayRoom.value;
-  const currentFilter = els.filterRoom.value || "all";
-  els.stayRoom.innerHTML = '<option value="">Seleziona stanza</option>' + sorted.map(room => `<option value="${esc(room.code)}">${esc(room.code)} · ${esc(room.typeLabel)} · cap. ${esc(room.capacity)}</option>`).join("");
-  els.filterRoom.innerHTML = '<option value="all">Tutte le stanze</option>' + sorted.map(room => `<option value="${esc(room.code)}">${esc(room.code)}</option>`).join("");
-  if ([...els.stayRoom.options].some(option => option.value === currentStayRoom)) els.stayRoom.value = currentStayRoom;
-  if ([...els.filterRoom.options].some(option => option.value === currentFilter)) els.filterRoom.value = currentFilter;
+  const sortedRooms = state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code));
+  const selectedStayRoom = els.stayRoom.value;
+  const selectedFilterRoom = els.filterRoom.value || "all";
+
+  els.stayRoom.innerHTML = '<option value="">Seleziona stanza</option>' + sortedRooms.map(room => {
+    return '<option value="' + escapeHtml(room.code) + '">' + escapeHtml(room.code) + ' · ' + escapeHtml(room.typeLabel) + ' · cap. ' + escapeHtml(room.capacity) + '</option>';
+  }).join("");
+
+  els.filterRoom.innerHTML = '<option value="all">Tutte le stanze</option>' + sortedRooms.map(room => {
+    return '<option value="' + escapeHtml(room.code) + '">' + escapeHtml(room.code) + '</option>';
+  }).join("");
+
+  if ([...els.stayRoom.options].some(option => option.value === selectedStayRoom)) els.stayRoom.value = selectedStayRoom;
+  if ([...els.filterRoom.options].some(option => option.value === selectedFilterRoom)) els.filterRoom.value = selectedFilterRoom;
 }
 
 function renderRooms() {
   const date = els.today.value;
-  els.roomsTable.innerHTML = state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code)).map(room => {
+  const rows = state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code)).map(room => {
     const usage = roomUsage(room.code, date);
-    const status = usage.occupied > usage.capacity ? '<span class="badge bad">Overbooking</span>' : usage.available === 0 ? '<span class="badge warn">Completa</span>' : '<span class="badge ok">Disponibile</span>';
-    return `<tr>
-      <td><span class="room-pill">${esc(room.code)}</span></td>
-      <td><strong>${esc(room.typeLabel)}</strong></td>
-      <td>${usage.capacity}</td>
-      <td>${usage.occupied}</td>
-      <td>${usage.available}</td>
-      <td>${status}</td>
-      <td class="right"><button class="btn secondary" type="button" data-delete-room="${esc(room.code)}">Elimina</button></td>
-    </tr>`;
-  }).join("");
+    let status = '<span class="badge ok">Disponibile</span>';
+    if (usage.occupied > usage.capacity) status = '<span class="badge bad">Overbooking</span>';
+    else if (usage.available === 0) status = '<span class="badge warn">Completa</span>';
+
+    return '<tr>' +
+      '<td><span class="room-pill">' + escapeHtml(room.code) + '</span></td>' +
+      '<td><strong>' + escapeHtml(room.typeLabel) + '</strong></td>' +
+      '<td>' + usage.capacity + '</td>' +
+      '<td>' + usage.occupied + '</td>' +
+      '<td>' + usage.available + '</td>' +
+      '<td>' + status + '</td>' +
+      '<td class="right"><button class="btn secondary" type="button" data-delete-room="' + escapeHtml(room.code) + '">Elimina</button></td>' +
+      '</tr>';
+  });
+  els.roomsTable.innerHTML = rows.join("");
 }
 
-function getFilteredStays() {
-  const q = String(els.searchStay.value || "").trim().toLowerCase();
+function filteredStays() {
+  const query = String(els.searchStay.value || "").trim().toLowerCase();
   const room = els.filterRoom.value || "all";
   return state.stays.filter(stay => room === "all" || stay.roomCode === room).filter(stay => {
-    if (!q) return true;
-    return [stay.roomCode, stay.workerId, stay.surname, stay.name, stay.company, stay.nationality, stay.role, stay.status].join(" ").toLowerCase().includes(q);
+    if (!query) return true;
+    return [stay.roomCode, stay.workerId, stay.surname, stay.name, stay.company, stay.nationality, stay.role, stay.status].join(" ").toLowerCase().includes(query);
   }).sort((a, b) => String(b.checkIn || "").localeCompare(String(a.checkIn || "")));
 }
 
 function renderStays() {
-  const rows = getFilteredStays();
-  els.staysTable.innerHTML = rows.map(stay => {
-    const fullName = `${cap(stay.surname)} ${cap(stay.name)}`.trim() || "-";
+  const rows = filteredStays().map(stay => {
+    const fullName = (capitalize(stay.surname) + " " + capitalize(stay.name)).trim() || "-";
     const statusClass = stay.status === "confirmed" ? "ok" : stay.status === "cancelled" ? "bad" : "warn";
-    return `<tr>
-      <td><strong>${esc(fullName)}</strong><div class="small">ID ${esc(stay.workerId || "-")} · ${esc(cap(stay.role) || "-")}</div></td>
-      <td><span class="room-pill">${esc(stay.roomCode)}</span></td>
-      <td>${esc(upper(stay.company) || "-")}<div class="small">${esc(stay.nationality || "-")}</div></td>
-      <td>${fmtDate(stay.checkIn)} → ${fmtDate(stay.checkOut)}</td>
-      <td><span class="badge ${statusClass}">${esc(stay.status)}</span></td>
-      <td class="right"><button class="btn secondary" type="button" data-delete-stay="${esc(stay.id)}">Elimina</button></td>
-    </tr>`;
-  }).join("");
+    return '<tr>' +
+      '<td><strong>' + escapeHtml(fullName) + '</strong><div class="small">ID ' + escapeHtml(stay.workerId || "-") + ' · ' + escapeHtml(capitalize(stay.role) || "-") + '</div></td>' +
+      '<td><span class="room-pill">' + escapeHtml(stay.roomCode) + '</span></td>' +
+      '<td>' + escapeHtml(upper(stay.company) || "-") + '<div class="small">' + escapeHtml(stay.nationality || "-") + '</div></td>' +
+      '<td>' + formatDate(stay.checkIn) + ' → ' + formatDate(stay.checkOut) + '</td>' +
+      '<td><span class="badge ' + statusClass + '">' + escapeHtml(stay.status) + '</span></td>' +
+      '<td class="right"><button class="btn secondary" type="button" data-delete-stay="' + escapeHtml(stay.id) + '">Elimina</button></td>' +
+      '</tr>';
+  });
+  els.staysTable.innerHTML = rows.join("");
 }
 
 function renderHistory() {
-  const rooms = state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code));
-  els.historyGrid.innerHTML = rooms.map(room => {
+  const html = state.rooms.slice().sort((a, b) => a.code.localeCompare(b.code)).map(room => {
     const stays = state.stays.filter(stay => stay.roomCode === room.code).sort((a, b) => String(a.checkIn || "").localeCompare(String(b.checkIn || "")));
-    return `<div class="history-room"><strong>Stanza ${esc(room.code)}</strong><div class="small">${esc(room.typeLabel)} · capienza ${esc(room.capacity)}</div>${stays.length ? stays.map(stay => `<div class="stay-item"><strong>${esc(`${cap(stay.surname)} ${cap(stay.name)}`.trim() || "-")}</strong><div class="small">${esc(upper(stay.company) || "-")} · ${esc(stay.status || "-")}</div><div class="small">${fmtDate(stay.checkIn)} → ${fmtDate(stay.checkOut)}</div></div>`).join("") : '<div class="small" style="margin-top:10px">Nessun soggiorno.</div>'}</div>`;
+    const stayHtml = stays.length ? stays.map(stay => {
+      const fullName = (capitalize(stay.surname) + " " + capitalize(stay.name)).trim() || "-";
+      return '<div class="stay-item"><strong>' + escapeHtml(fullName) + '</strong><div class="small">' + escapeHtml(upper(stay.company) || "-") + ' · ' + escapeHtml(stay.status || "-") + '</div><div class="small">' + formatDate(stay.checkIn) + ' → ' + formatDate(stay.checkOut) + '</div></div>';
+    }).join("") : '<div class="small" style="margin-top:10px">Nessun soggiorno.</div>';
+    return '<div class="history-room"><strong>Stanza ' + escapeHtml(room.code) + '</strong><div class="small">' + escapeHtml(room.typeLabel) + ' · capienza ' + escapeHtml(room.capacity) + '</div>' + stayHtml + '</div>';
   }).join("");
+  els.historyGrid.innerHTML = html;
 }
 
 function addRoom() {
   const code = upper(els.roomCode.value);
   const typeLabel = String(els.roomType.value || "").trim();
   const capacity = Number(els.roomCapacity.value || 0);
+
   if (!code) return showNotice("bad", "Inserisci il numero stanza.");
   if (!typeLabel) return showNotice("bad", "Inserisci il tipo camera.");
   if (!capacity || capacity < 1) return showNotice("bad", "Inserisci una capienza valida.");
   if (state.rooms.some(room => room.code === code)) return showNotice("bad", "Questa stanza esiste già.");
+
   state.rooms.push({ code, typeLabel, capacity });
   els.roomCode.value = "";
-  saveState("Camera salvata correttamente.");
+  persistState("Camera salvata correttamente.");
 }
 
-function validateStay(payload) {
-  if (!payload.roomCode || !payload.surname || !payload.name || !payload.company || !payload.checkIn || !payload.checkOut) return "Compila stanza, cognome, nome, azienda, check-in e check-out.";
-  if (!isDate(payload.checkIn) || !isDate(payload.checkOut)) return "Inserisci date valide.";
-  if (payload.checkIn >= payload.checkOut) return "Il check-out deve essere successivo al check-in.";
-  const usage = roomUsageForPeriod(payload.roomCode, payload.checkIn, payload.checkOut);
-  if (payload.status !== "cancelled" && usage.booked >= usage.capacity) return "Camera piena nel periodo selezionato.";
-  if (payload.workerId && state.stays.some(stay => activeStay(stay) && upper(stay.workerId) === payload.workerId && rangesOverlap(stay.checkIn, stay.checkOut, payload.checkIn, payload.checkOut))) return "Worker ID già presente nello stesso periodo.";
-  return "";
-}
-
-function addStay() {
-  const payload = {
+function buildStayFromForm() {
+  return {
     id: uid(),
     roomCode: upper(els.stayRoom.value),
     workerId: upper(els.workerId.value),
@@ -312,37 +317,57 @@ function addStay() {
     checkIn: els.checkIn.value,
     checkOut: els.checkOut.value
   };
-  const error = validateStay(payload);
+}
+
+function validateStay(stay) {
+  if (!stay.roomCode || !stay.surname || !stay.name || !stay.company || !stay.checkIn || !stay.checkOut) return "Compila stanza, cognome, nome, azienda, check-in e check-out.";
+  if (!isIsoDate(stay.checkIn) || !isIsoDate(stay.checkOut)) return "Inserisci date valide.";
+  if (stay.checkIn >= stay.checkOut) return "Il check-out deve essere successivo al check-in.";
+  const usage = roomUsageForPeriod(stay.roomCode, stay.checkIn, stay.checkOut);
+  if (stay.status !== "cancelled" && usage.booked >= usage.capacity) return "Camera piena nel periodo selezionato.";
+  const duplicate = stay.workerId && state.stays.some(item => {
+    return isActiveStay(item) && upper(item.workerId) === stay.workerId && rangesOverlap(item.checkIn, item.checkOut, stay.checkIn, stay.checkOut);
+  });
+  if (duplicate) return "Worker ID già presente nello stesso periodo.";
+  return "";
+}
+
+function addStay() {
+  const stay = buildStayFromForm();
+  const error = validateStay(stay);
   if (error) return showNotice("bad", error);
-  state.stays.push(payload);
+  state.stays.push(stay);
   resetStayForm();
-  saveState("Soggiorno registrato correttamente.");
+  persistState("Soggiorno registrato correttamente.");
 }
 
 function resetStayForm() {
   [els.stayRoom, els.workerId, els.surname, els.name, els.company, els.nationality, els.role].forEach(input => input.value = "");
   els.status.value = "confirmed";
+  els.checkIn.value = "";
+  els.checkOut.value = "";
   setDefaultDates();
 }
 
 function deleteRoom(code) {
   if (state.stays.some(stay => stay.roomCode === code)) return showNotice("bad", "Non puoi eliminare una stanza con soggiorni collegati.");
-  if (!confirm(`Eliminare la stanza ${code}?`)) return;
+  if (!confirm("Eliminare la stanza " + code + "?")) return;
   state.rooms = state.rooms.filter(room => room.code !== code);
-  saveState("Stanza eliminata.");
+  persistState("Stanza eliminata.");
 }
 
 function deleteStay(id) {
   const stay = state.stays.find(item => item.id === id);
   if (!stay) return;
-  if (!confirm(`Eliminare il soggiorno di ${cap(stay.surname)} ${cap(stay.name)}?`)) return;
+  const fullName = (capitalize(stay.surname) + " " + capitalize(stay.name)).trim();
+  if (!confirm("Eliminare il soggiorno di " + fullName + "?")) return;
   state.stays = state.stays.filter(item => item.id !== id);
-  saveState("Soggiorno eliminato.");
+  persistState("Soggiorno eliminato.");
 }
 
 function exportJson() {
-  const payload = { exportedAt: new Date().toISOString(), ...state };
-  download(`hotel-fletcher-v2-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+  const payload = { exportedAt: new Date().toISOString(), rooms: state.rooms, stays: state.stays };
+  downloadFile("hotel-fletcher-v2-backup-" + todayISO() + ".json", JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
   showNotice("ok", "Backup JSON esportato.");
 }
 
@@ -354,28 +379,32 @@ function importJson(file) {
       const parsed = JSON.parse(String(reader.result || "{}"));
       if (!Array.isArray(parsed.rooms) || !Array.isArray(parsed.stays)) throw new Error("Formato non valido");
       state = normalizeState(parsed);
-      saveState("Backup JSON importato.");
+      persistState("Backup JSON importato.");
     } catch (error) {
-      showNotice("bad", `Import non riuscito: ${error.message}`);
+      showNotice("bad", "Import non riuscito: " + error.message);
     }
   };
   reader.readAsText(file);
 }
 
+function csvCell(value) {
+  const text = String(value ?? "");
+  if (text.includes('"') || text.includes(';') || text.includes('\n')) {
+    return '"' + text.replaceAll('"', '""') + '"';
+  }
+  return text;
+}
+
 function exportCsv() {
   const headers = ["Room number", "ID", "Surname", "Name", "Role", "Nationality", "Company", "Status", "Check in", "Check out"];
-  const rows = state.stays.map(stay => [stay.roomCode, stay.workerId, cap(stay.surname), cap(stay.name), cap(stay.role), stay.nationality, upper(stay.company), stay.status, stay.checkIn, stay.checkOut]);
-  const csv = [headers, ...rows].map(row => row.map(csvCell).join(";")).join("\n");
-  download(`hotel-fletcher-v2-export-${todayISO()}.csv`, "\ufeff" + csv, "text/csv;charset=utf-8");
+  const rows = state.stays.map(stay => [stay.roomCode, stay.workerId, capitalize(stay.surname), capitalize(stay.name), capitalize(stay.role), stay.nationality, upper(stay.company), stay.status, stay.checkIn, stay.checkOut]);
+  const lines = [headers].concat(rows).map(row => row.map(csvCell).join(";"));
+  const csv = "\ufeff" + lines.join("\n");
+  downloadFile("hotel-fletcher-v2-export-" + todayISO() + ".csv", csv, "text/csv;charset=utf-8");
   showNotice("ok", "Export CSV generato.");
 }
 
-function csvCell(value) {
-  const text = String(value ?? "");
-  return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function download(filename, content, type) {
+function downloadFile(filename, content, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -391,43 +420,51 @@ function setDefaultDates() {
   if (!els.today.value) els.today.value = todayISO();
   if (!els.checkIn.value) els.checkIn.value = els.today.value;
   if (!els.checkOut.value) {
-    const d = new Date(`${els.checkIn.value || todayISO()}T00:00:00`);
+    const d = new Date((els.checkIn.value || todayISO()) + "T00:00:00");
     d.setDate(d.getDate() + 7);
     els.checkOut.value = d.toISOString().slice(0, 10);
   }
 }
 
-document.querySelectorAll(".tab-btn").forEach(button => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(item => item.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.remove("active"));
-    button.classList.add("active");
-    document.getElementById(button.dataset.tab).classList.add("active");
+function bindEvents() {
+  document.querySelectorAll(".tab-btn").forEach(button => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach(item => item.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.remove("active"));
+      button.classList.add("active");
+      document.getElementById(button.dataset.tab).classList.add("active");
+    });
   });
-});
 
-els.addRoomBtn.addEventListener("click", addRoom);
-els.addStayBtn.addEventListener("click", addStay);
-els.resetStayFormBtn.addEventListener("click", resetStayForm);
-els.today.addEventListener("change", renderAll);
-els.searchStay.addEventListener("input", renderStays);
-els.filterRoom.addEventListener("change", renderStays);
-els.exportJsonBtn.addEventListener("click", exportJson);
-els.importJsonBtn.addEventListener("click", () => els.importJsonFile.click());
-els.importJsonFile.addEventListener("change", event => {
-  importJson(event.target.files && event.target.files[0]);
-  event.target.value = "";
-});
-els.exportCsvBtn.addEventListener("click", exportCsv);
+  els.addRoomBtn.addEventListener("click", addRoom);
+  els.addStayBtn.addEventListener("click", addStay);
+  els.resetStayFormBtn.addEventListener("click", resetStayForm);
+  els.today.addEventListener("change", renderAll);
+  els.searchStay.addEventListener("input", renderStays);
+  els.filterRoom.addEventListener("change", renderStays);
+  els.exportJsonBtn.addEventListener("click", exportJson);
+  els.importJsonBtn.addEventListener("click", () => els.importJsonFile.click());
+  els.importJsonFile.addEventListener("change", event => {
+    importJson(event.target.files && event.target.files[0]);
+    event.target.value = "";
+  });
+  els.exportCsvBtn.addEventListener("click", exportCsv);
 
-document.addEventListener("click", event => {
-  const roomCode = event.target.dataset.deleteRoom;
-  const stayId = event.target.dataset.deleteStay;
-  if (roomCode) deleteRoom(roomCode);
-  if (stayId) deleteStay(stayId);
-});
+  document.addEventListener("click", event => {
+    const roomCode = event.target.dataset.deleteRoom;
+    const stayId = event.target.dataset.deleteStay;
+    if (roomCode) deleteRoom(roomCode);
+    if (stayId) deleteStay(stayId);
+  });
+}
 
-setDefaultDates();
-injectAutoAssignControl();
-renderAll();
-console.info("Hotel Fletcher V2 MVP online", { rooms: state.rooms.length, stays: state.stays.length });
+try {
+  setDefaultDates();
+  injectAutoAssignButton();
+  bindEvents();
+  renderAll();
+  console.info("Hotel Fletcher V2 stable loaded", { rooms: state.rooms.length, stays: state.stays.length });
+} catch (error) {
+  console.error("App startup failed", error);
+  showNotice("bad", "Errore di avvio applicazione. Controlla la console.");
+}
