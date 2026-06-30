@@ -1,0 +1,13 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local env
+.env
+.env.local
+
+# Backups generated locally
+*.bak
